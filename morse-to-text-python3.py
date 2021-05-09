@@ -1,5 +1,6 @@
 from numpy.fft import fft
 from matplotlib.pyplot import *
+import matplotlib as plt
 from numpy import *
 
 from pydub import AudioSegment
@@ -9,6 +10,8 @@ import scipy.io.wavfile as wavfile
 import csv
 import time
 import os
+
+plt.style.use(['Solarize_Light2'])
 
 SCRIPT_DIR = os.path.dirname(__file__)
 REPORT_DIR = os.path.join(SCRIPT_DIR, 'reports')
@@ -22,12 +25,12 @@ original_file = os.path.join(REPORT_DIR, 'original')
 
 class Plotter:
 
-    def __init__(self, format="pdf"):
+    def __init__(self, format="png"):
         self.format = format
 
-    def saveplot(self, name, data, length=-1, height=-1, dpi=None):
+    def saveplot(self, name, data, length=-1, height=-1, dpi=300):
         name = os.path.join(REPORT_DIR, name)
-        plot(data)
+        plot(data, linewidth=0.5, markersize=1)
         if length != -1:
             axis(xmax=length)
         if height != -1:
@@ -35,10 +38,10 @@ class Plotter:
         savefig(name + "." + self.format, format=self.format, dpi=dpi)
         cla()
 
-    def specgram(self, name, signal):
+    def specgram(self, name, signal, dpi=300):
         name = os.path.join(REPORT_DIR, name)
-        spectrogram = specgram(signal, Fs = 2)  # Fs needs to be supplied
-        savefig(name + "." + self.format, format=self.format)
+        spectrogram = specgram(signal, Fs=2)  # Fs needs to be supplied
+        savefig(name + "." + self.format, format=self.format, dpi=dpi)
         cla()
         return spectrogram
 
@@ -46,16 +49,20 @@ class Plotter:
 class SoundFile:
 
     def __init__(self, path):
-        the_file = wavfile.read(path)
-        self.rate = the_file[0]  # Optimise the 'the_file' variable
-        self.length = len(the_file[1])
-        self.data = the_file[1]
+        sound_file = wavfile.read(path)
+
+        self.rate, self.data = sound_file  # Optimise the 'sound_file' variable
+        self.length = len(sound_file[1])
+
+        print(f"> {os.path.basename(path)}")
+        print("Rate: ", self.rate)
+        print("Length", self.length)
 
         power = 10
-
         while pow(2,power) < self.length:
             power += 1
-        self.data = append(self.data, zeros(pow(2,power) - self.length))
+
+        self.data = append(self.data, zeros(pow(2,power) - self.length))  # Check why numpy.zeros()
 
     def setdata(self, data):
         self.data = data
@@ -69,66 +76,71 @@ class SoundFile:
     def saveas(self, path):
         wavfile.write(path, self.rate, self.data)
 
-    def saveplot(self, fileName):
-        plotter.saveplot(fileName, self.data, length=self.length)
-
 
 class SignalFilter:
 
     def filter(self, soundfile):
         trans = fft.rfft(soundfile.getdata())  # Transposing data?
-        trans_real = abs(trans)
+        self.trans_real = abs(trans)
 
-        #2b - Save the plot
-        plotter.saveplot("transformed", trans_real)  # Saving transposed data
+        band = 2000  # Over a 2KHz band
 
-        #3 - busco la frecuencia
-        band = 2000
-
-        # ignore the first 200Hz
+        # Ignore the first 200Hz
         hzignored = 200
-        frec = hzignored + argmax(trans_real[hzignored:])
+        frec = hzignored + argmax(self.trans_real[hzignored:])  # Calculate the frequency
         min = int((frec - band / 2)) if (frec > band / 2) else 0
 
+        print(f"Band: {band} Hz")
+        print(f"Frequency: {frec} Hz")
+        print(f"Min: {min} Hz")
+
         filter_array = append(zeros(min), ones(band))
-        filter_array = append(filter_array, zeros(len(trans_real) - len(filter_array)))
-        filtered_array = multiply(trans, filter_array)
-        plotter.saveplot("filtered_trans",abs(filtered_array))
+        filter_array = append(filter_array, zeros(len(self.trans_real) - len(filter_array)))
 
-        #4 - Untransform?
-        filtered_signal = array(fft.irfft(filtered_array)[:soundfile.getlength()], dtype="int16")
-        plotter.saveplot("filtered_signal",filtered_signal)
-        soundfile.setdata(filtered_signal)
+        self.filtered_array = multiply(trans, filter_array)
+        self.filtered_signal = array(fft.irfft(self.filtered_array)[:soundfile.getlength()], dtype="int16")
+        soundfile.setdata(self.filtered_signal)
 
 
-class SpectreAnalyzer:
+class SpectreAnalyzer():
+    def __init__(self, soundfile):
+        self.set_signal(soundfile.getdata())   # Audio file data is passed to the spectrogram
 
-	def spectrogram(self, signal):
-		spectrogram = plotter.specgram("spectrogram", signal)  # Audio file data
-		return spectrogram
+    def set_spectrogram(self, spectrogram):
+        self.spectrogram = spectrogram
 
-	def sumarizecolumns(self, mat):
-		vec_ones = ones(len(mat))
-		vec_sum = (matrix(vec_ones) * matrix(mat)).transpose()
-		plotter.saveplot("frecuency_volume",vec_sum)
-		return vec_sum
+    def set_signal(self, signal):
+        self.signal = signal
 
-	def findpresence(self, vec_sum):
-		presence = zeros(len(vec_sum))
-		threshold = max(vec_sum) / 2.0
-		for i in range(len(presence)):
-			if vec_sum[i] > threshold:
-				presence[i] = 1
-		plotter.saveplot("presence", presence, dpi=300, height=5)
-		return presence
+    def get_signal(self):
+        return self.signal
 
-	def findpulses(self, soundfile):  # Audio file is passed in
-		spec = self.spectrogram(soundfile.getdata())   # Audio file data is passed to the spectrogram
-		# spec[0] es la matriz del rojo
-		red_matrix = spec[0]
-		vec_sum = self.sumarizecolumns(red_matrix)
-		presence = self.findpresence(vec_sum)
-		return presence
+    def set_vec_sum(self, vec_sum):
+        self.vec_sum = vec_sum
+
+    def set_presence(self, presence):
+        self.presence = presence
+
+    def sumarizecolumns(self, mat):
+        vec_ones = ones(len(mat))
+        vec_sum = (matrix(vec_ones) * matrix(mat)).transpose()
+        return vec_sum
+
+    def findpresence(self, vec_sum):
+        presence = zeros(len(vec_sum))
+        threshold = max(vec_sum) / 2.0
+        for i in range(len(presence)):
+            if vec_sum[i] > threshold:
+                presence[i] = 1
+        return presence
+
+    def findpulses(self, soundfile):  # Audio file is passed in
+        spec = self.spectrogram
+        red_matrix = spec[0]
+        self.set_vec_sum(self.sumarizecolumns(red_matrix))
+        self.set_presence(self.findpresence(self.vec_sum))
+
+        return self.presence
 
 
 class ShortLong:
@@ -280,34 +292,49 @@ class Segmenter:
 
 
 
-# Move all this into the main() later
+def main():
+    # Plot for matplotlib figure
+    plotter = Plotter("png")
 
-# Plot for matplotlib figure
-plotter = Plotter("png")
-
-# Create a SoundFile object to get the data from the file
-the_file = SoundFile(file)
-the_file.saveplot(original_file)
-
-
-# Filter the signal (maybe filtering the noise)
-the_filter = SignalFilter()
-the_filter.filter(the_file)
+    # Create a SoundFile object to get the data from the file
+    sound_file = SoundFile(file)
+    plotter.saveplot(original_file, sound_file.data, length=sound_file.length)
 
 
-# Find the spikes/peaks for the morse code (or dees)
-analyzer = SpectreAnalyzer()
-pulses = analyzer.findpulses(the_file)
+    # Filter the signal (maybe filtering the noise)
+    sound_filter = SignalFilter()
+    sound_filter.filter(sound_file)
+
+    plotter.saveplot("transformed", sound_filter.trans_real)  # Saving transposed data
+    plotter.saveplot("filtered_trans", abs(sound_filter.filtered_array))
+    plotter.saveplot("filtered_signal", sound_filter.filtered_signal)
 
 
-# Translate the highs/lows to appropriate string characters
-pul_translator = PulsesTranslator()
-code_string = pul_translator.tostring(pulses)
+    # Find the spikes/peaks for the morse code (or dees)
+    analyzer = SpectreAnalyzer(sound_file)
+    signal = analyzer.get_signal()
+    spectrogram = plotter.specgram("spectrogram", signal)
+    analyzer.set_spectrogram(spectrogram)
+    pulses = analyzer.findpulses(sound_file)
 
-# Translate the morse code string to ascii text
-str_translator = StringTranslator()
-s = str_translator.totext(code_string)
+    plotter.saveplot("frecuency_volume", analyzer.vec_sum)
+    plotter.saveplot("presence", analyzer.presence, dpi=300, height=5)
 
-# Print out the results
-print(code_string)
-print(s)
+
+    # Translate the highs/lows to appropriate string characters
+    pul_translator = PulsesTranslator()
+    code_string = pul_translator.tostring(pulses)
+
+    # Translate the morse code string to ascii text
+    str_translator = StringTranslator()
+    s = str_translator.totext(code_string)
+
+    # Print out the results
+    print(code_string)
+    print(s)
+
+    # np.savetxt("data/spectreAnalyzer.csv", , delimiter=",")
+    # sys.exit(0)
+
+if __name__ == '__main__':
+    main()
